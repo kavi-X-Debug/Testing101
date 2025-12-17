@@ -1,0 +1,97 @@
+#!/bin/bash
+# ============================================
+# 🎧 Audio Steganography Pro Analyzer
+#  Made for CTF challenges by Kavishka 
+#  Supports flag formats: picoCTF{} & MEDUSA{}
+# ============================================
+
+if [ $# -eq 0 ]; then
+    echo "Usage: ./audio_stego_pro.sh <audiofile.wav>"
+    exit 1
+fi
+
+FILE=$1
+BASENAME=$(basename "$FILE" | cut -d. -f1)
+OUTDIR="stego_${BASENAME}_results"
+
+mkdir -p "$OUTDIR"
+cd "$OUTDIR" || exit
+
+echo "============================================"
+echo "[+] Starting Audio Stego Analysis for: $FILE"
+echo "============================================"
+
+cp "../$FILE" .
+
+# 1️ File info
+echo -e "\n[1] FILE TYPE:"
+file "$FILE"
+
+# 2️ Metadata
+echo -e "\n[2] METADATA (Exiftool):"
+exiftool "$FILE"
+
+# 3️ Strings scan
+echo -e "\n[3] STRINGS (searching for flags like picoCTF{} or MEDUSA{}):"
+strings "$FILE" | grep -E "picoCTF|MEDUSA|flag|CTF|{.*}" || echo "[-] No visible flag-like strings found."
+
+# 4️ Binwalk
+echo -e "\n[4] BINWALK:"
+binwalk -e "$FILE"
+
+# 5️ Foremost
+echo -e "\n[5] FOREMOST:"
+foremost -i "$FILE" -o foremost_output >/dev/null 2>&1
+[ -d "foremost_output" ] && echo "[+] Foremost output saved."
+
+# 6️ Reverse audio
+echo -e "\n[6] Creating reversed audio:"
+sox "$FILE" reversed.wav reverse
+echo "[+] Saved reversed.wav"
+
+# 7️ Mono conversion
+echo -e "\n[7] Converting to mono:"
+ffmpeg -y -i "$FILE" -ac 1 -vn mono.wav >/dev/null 2>&1
+echo "[+] Saved mono.wav"
+
+# 8️ Spectrograms
+echo -e "\n[8] Generating spectrograms..."
+sox "$FILE" -n spectrogram -o "${BASENAME}_spectrogram.png"
+sox reversed.wav -n spectrogram -o "${BASENAME}_reversed_spectrogram.png"
+sox "$FILE" -n highpass 3000 spectrogram -o "${BASENAME}_filtered_spectrogram.png"
+echo "[+] Spectrograms saved!"
+
+# 9️ WavSteg extraction
+echo -e "\n[9] WAVSTEG EXTRACTION (n=1 to 4):"
+for i in {1..4}; do
+    echo "[*] Trying LSB level $i..."
+    wavsteg -r -n $i -s "$FILE" -o "wavsteg_n${i}.bin" >/dev/null 2>&1
+    if [ -s "wavsteg_n${i}.bin" ]; then
+        echo "[+] Output saved: wavsteg_n${i}.bin"
+        strings "wavsteg_n${i}.bin" | grep -E "picoCTF|MEDUSA|flag|CTF|{.*}" && echo ""
+    else
+        echo "[-] No result for n=$i"
+    fi
+done
+
+# 10 StegoLSB extraction
+echo -e "\n[10] STEGOLSB EXTRACTION:"
+if command -v stegolsb &>/dev/null; then
+    stegolsb extract -i "$FILE" -o stegolsb_output.txt >/dev/null 2>&1
+    if [ -s "stegolsb_output.txt" ]; then
+        echo "[+] StegoLSB output saved!"
+        grep -E "picoCTF|MEDUSA|flag|CTF|{.*}" stegolsb_output.txt || echo "[-] No visible flag found."
+    else
+        echo "[-] StegoLSB found nothing."
+    fi
+else
+    echo "[-] StegoLSB not installed. Skipping..."
+fi
+
+# 11️ Hex dump
+echo -e "\n[11] HEXDUMP (first 64 bytes):"
+xxd "$FILE" | head -n 10
+
+# ✅ Done
+echo -e "\n✅ Scan complete!"
+echo "All results saved in: $OUTDIR/"

@@ -1,0 +1,95 @@
+#!/bin/bash
+
+# ==========================================
+# 🕵️ Image Steganography Auto Analyzer (CTF)
+# ==========================================
+# This script automates steganalysis on image files using multiple tools.
+# Supports: PNG, JPG, JPEG, BMP
+# Example flag formats: MEDUSA{}, picoCTF{}, FLAG{}
+# Made for CTF challenges by Kavishka 
+# ==========================================
+
+if [ -z "$1" ]; then
+    echo "Usage: ./image_stego_analyzer.sh <image_file>"
+    exit 1
+fi
+
+IMG="$1"
+BASENAME=$(basename "$IMG")
+
+echo "==========================================="
+echo "🔍 Starting Image Steganography Analysis"
+echo "File: $BASENAME"
+echo "==========================================="
+
+# ---- Step 1: Identify file type ----
+echo "[+] Checking file type..."
+file "$IMG"
+echo ""
+
+# ---- Step 2: Metadata analysis ----
+echo "[+] Running exiftool..."
+exiftool "$IMG"
+echo ""
+
+# ---- Step 3: Extract readable text ----
+echo "[+] Running strings (searching for possible flags)..."
+strings "$IMG" | grep -E "MEDUSA|picoCTF|flag|FLAG|key|KEY" || echo "No obvious strings found."
+echo ""
+
+# ---- Step 4: Run binwalk ----
+echo "[+] Running binwalk to find embedded files..."
+binwalk "$IMG"
+echo ""
+
+# ---- Step 5: Extract hidden files with binwalk ----
+echo "[+] Extracting embedded data (if any)..."
+binwalk --extract --dd=".*" "$IMG"
+echo "Check the '_${BASENAME}.extracted' folder if created."
+echo ""
+
+# ---- Step 6: Run foremost ----
+echo "[+] Running foremost (data carving)..."
+foremost -i "$IMG" -o output_foremost > /dev/null 2>&1
+echo "Check 'output_foremost' folder for recovered data."
+echo ""
+
+# ---- Step 7: Run steghide ----
+echo "[+] Trying steghide (no password)..."
+steghide extract -sf "$IMG" -p "" -f > /dev/null 2>&1
+if [ $? -eq 0 ]; then
+    echo "✅ Data extracted with steghide (check current folder)."
+else
+    echo "❌ No data found with steghide (try common passwords manually)."
+fi
+echo ""
+
+# ---- Step 8: Run zsteg (for PNG/BMP) ----
+if [[ "$IMG" == *.png || "$IMG" == *.bmp ]]; then
+    echo "[+] Running zsteg -a (all detection methods)..."
+    zsteg -a "$IMG"
+else
+    echo "[!] Skipping zsteg (only works on PNG/BMP files)."
+fi
+echo ""
+
+# ---- Step 9: Run stegolsb LSB extraction (1–4 bits) ----
+if command -v stegolsb &> /dev/null; then
+    echo "[+] Running stegolsb (LSB decode, 1–4 bits)..."
+    for n in {1..4}; do
+        echo "--- Checking n=$n bits ---"
+        stegolsb lsb -r -n $n -i "$IMG" -o "lsb_extract_n${n}.txt" 2>/dev/null
+        if grep -q "MEDUSA" "lsb_extract_n${n}.txt"; then
+            echo "✅ Possible flag found in lsb_extract_n${n}.txt"
+        fi
+    done
+else
+    echo "[!] stegolsb not installed. Skipping LSB extraction."
+fi
+echo ""
+
+# ---- Step 10: Completion ----
+echo "==========================================="
+echo "✅ Image Analysis Complete!"
+echo "Check generated files and folders for possible flags."
+echo "==========================================="
